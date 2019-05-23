@@ -2,25 +2,50 @@ import tkinter as tk
 from tkinter import messagebox
 from re import split, compile
 from urllib import parse
-from requests import get, post
+import requests
 from bs4 import BeautifulSoup
 from time import time, sleep, strftime, localtime
 from threading import Thread, Event
-from logging import info, basicConfig,DEBUG
-from unittest import TestCase
+import logging
+from logging import handlers
+from traceback import format_exc
 
 url = 'http://sxd.xyhero.com/index.php'
 
-# global label_age
-# label_age = tk.Label()
 
-# global label_info
-# label_info = tk.Label()
+class Logger(object):
+    level_relations = {
+        'debug': logging.DEBUG,
+        'info': logging.INFO,
+        'warning': logging.WARNING,
+        'error': logging.ERROR,
+        'crit': logging.CRITICAL
+    }  # 日志级别关系映射
+
+    def __init__(self, filename='../LOG/battle.log', level='debug', when='D', back_count=8, fmt='[%(asctime)s:%(message)s]'):
+        self.logger = logging.getLogger(filename)
+
+        # 实例化TimedRotatingFileHandler
+        th = handlers.TimedRotatingFileHandler(filename=filename, when=when, backupCount=back_count, encoding='utf-8')
+        # interval是时间间隔，backupCount是备份文件的个数，如果超过这个个数，就会自动删除，when是间隔的时间单位，单位有以下几种：
+        # S 秒
+        # M 分
+        # H 小时
+        # D 天
+        # W 每星期（interval==0时代表星期一）
+        # midnight 每天凌晨
+
+        # 设置日志格式
+        format_str = logging.Formatter(fmt)
+        # 设置文件里写入的格式
+        th.setFormatter(format_str)
+        # 设置日志级别
+        self.logger.setLevel(self.level_relations.get(level))
+        # 往文件里写入#指定间隔时间自动生成文件的处理器
+        self.logger.addHandler(th)
 
 
-class BattleLog(TestCase):
-    basicConfig(filename='../battle.log',
-                format='[%(asctime)s:%(message)s]', level=DEBUG, filemode='w', datefmt='%Y-%m-%d %I:%M:%S %p')
+log = Logger()
 
 
 login_window = tk.Tk()
@@ -41,24 +66,19 @@ password = tk.Entry(login_window, textvariable=userPass, show='*')
 password.place(x=80, y=45)
 
 
-
-
+success = 0
+fail = 0
 
 def login():
 
     # 拼接url并登陆
     textmod = {'id': uid.get(), 'pass': userPass.get(), 'login': '%B5%C7%C2%BC'}
     textmod = parse.urlencode(textmod)
-    res = get(url='%s%s%s' % (url, '?', textmod))
-
-
-
-
+    res = requests.get(url='%s%s%s' % (url, '?', textmod))
 
     try:
 
         # 获取cookie
-
         cookie_value = ''
         set_cookie = res.headers['Set-Cookie']
         array = split('[;,]', set_cookie)
@@ -73,7 +93,7 @@ def login():
         zhujiao_char = 'char_' + zhujiao_tag.attrs['href'].split('=')[1]
 
         # 道徒代码
-        daotu = get(url='%s%s' % (url, '?menu=daotutudi'), headers=headers)
+        daotu = requests.get(url='%s%s' % (url, '?menu=daotutudi'), headers=headers)
         daotu_soup = BeautifulSoup(daotu.text, "html.parser")
         daotu_tag = daotu_soup.find_all('div', class_='carpet0')
         daotu_char = []
@@ -81,7 +101,7 @@ def login():
             daotu_char.append('char_' + tag.contents[1].attrs['href'].split('=')[1])
 
         # 组装form表单
-        data = {}
+        data = dict()
         data[zhujiao_char] = 1
         for char in daotu_char:
             data[char] = 1
@@ -102,12 +122,15 @@ def login():
 
         def start_battle():
             common.config(state='readonly')
+            success = 0
+            fail = 0
             global t
             t = Job(char_common=var_common.get(), data=data, headers=headers)
             t.start()
 
         def stop_battle():
             common.config(state='normal')
+            log.logger.info('战斗成功率 = %.1f' % ((success / (success + fail)) * 100) + '%')
             global t
             t.stop()
 
@@ -142,8 +165,10 @@ def login():
                     guaji_req(self.char_common, self.data, self.headers)
                     end_time = time()
                     if (end_time - start_time) < 3:
-                        info("延时:%.2fs" % (3 - (end_time - start_time)))
-                        sleep(4.5 - (end_time - start_time) + 0.01)
+                        log.logger.info("延时:%.2fs" % (3 - (end_time - start_time)))
+                        sleep(3 - (end_time - start_time) + 0.01)
+                    else:
+                        log.logger.info('超时:%.2fs' % (end_time - start_time - 3))
 
             def pause(self):
                 self.__flag.clear()  # 设置为False, 让线程阻塞
@@ -154,19 +179,23 @@ def login():
             def stop(self):
                 self.__flag.set()  # 将线程从暂停状态恢复, 如何已经暂停的话
                 self.__running.clear()  # 设置为False
-                info('stop')
+                log.logger.info('stop')
 
         t = Job(char_common=var_common.get(), data=data, headers=headers)
 
+        requests.adapters.DEFAULT_RETRIES = 5
+
         def guaji_req(char_common, data, headers):
             try:
-                guaji_res = post(url='%s%s%s' % (url, '?common=', char_common), data=data, headers=headers)
-                battle_soup = BeautifulSoup(guaji_res.text, "html.parser")
-                fail_tag = battle_soup.find(text=compile("战斗失败.*"))
-                if fail_tag is not None:
 
+                guaji_res = requests.post(url='%s%s%s' % (url, '?common=', char_common), data=data, headers=headers)
+                battle_soup = BeautifulSoup(guaji_res.text, "html.parser")
+                fail_tag = battle_soup.find(text=compile("战斗失败·除魔失败.*"))
+                if fail_tag is not None:
+                    global fail
+                    fail += 1
                     var_info.set(strftime("%Y-%m-%d %H:%M:%S--", localtime()) + '战斗失败！')
-                    info('战斗失败！')
+                    log.logger.info('战斗失败·除魔失败')
                 else:
                     exp_tag = battle_soup.find(text=compile("获得经验 : .*"))
                     if not exp_tag:
@@ -182,22 +211,27 @@ def login():
                     if not zhenqi_tag:
                         zhenqi_tag = ''
                     purchase_char = (exp_tag + money_tag + zhenqi_tag).replace('\n', '')
-                    var_info.set(strftime("%Y-%m-%d %H:%M:%S--", localtime()) + purchase_char)
-                    info(purchase_char)
+                    if len(purchase_char) < 4:
+                        Logger('../LOG/error.log', level='error').logger.error('ERROR201:' + battle_soup)
+                    else:
+                        global success
+                        success += 1
+                        var_info.set(strftime("%Y-%m-%d %H:%M:%S--", localtime()) + purchase_char)
+                        log.logger.info(purchase_char)
                 age_tag = battle_soup.find(text=compile(".*年.*"))
                 if age_tag is not None:
-                    info('剩余寿命:' + age_tag)
                     var_age.set('剩余寿命:' + age_tag)
             except Exception as e:
-                info(e)
-                pass
+                Logger('../LOG/error.log', level='error').logger.error('ERROR209:' + format_exc(e))
             finally:
+
                 label_age.place(x=200, y=110)
                 label_info.place(x=100, y=130)
 
         main_window.mainloop()
-    except Exception as e:
-        alert = messagebox.showerror('error', '应该是账号或者密码错误。。。')
+    except Exception as ex:
+        messagebox.showerror('error', '应该是账号或者密码错误。。。')
+        Logger('../LOG/error.log', level='error').logger.error('ERROR221:' + format_exc(ex))
 
 
 login = tk.Button(login_window, text='登录', command=login)
