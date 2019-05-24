@@ -1,52 +1,18 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import *
+import tkinter.messagebox
 from re import split, compile
 from urllib import parse
 import requests
 from bs4 import BeautifulSoup
 from time import time, sleep, strftime, localtime
 from threading import Thread, Event
-import logging
-from logging import handlers
 from traceback import format_exc
+from Logger import Logger
+
 
 url = 'http://sxd.xyhero.com/index.php'
-
-
-class Logger(object):
-    level_relations = {
-        'debug': logging.DEBUG,
-        'info': logging.INFO,
-        'warning': logging.WARNING,
-        'error': logging.ERROR,
-        'crit': logging.CRITICAL
-    }  # 日志级别关系映射
-
-    def __init__(self, filename='../LOG/battle.log', level='debug', when='D', back_count=8, fmt='[%(asctime)s:%(message)s]'):
-        self.logger = logging.getLogger(filename)
-
-        # 实例化TimedRotatingFileHandler
-        th = handlers.TimedRotatingFileHandler(filename=filename, when=when, backupCount=back_count, encoding='utf-8')
-        # interval是时间间隔，backupCount是备份文件的个数，如果超过这个个数，就会自动删除，when是间隔的时间单位，单位有以下几种：
-        # S 秒
-        # M 分
-        # H 小时
-        # D 天
-        # W 每星期（interval==0时代表星期一）
-        # midnight 每天凌晨
-
-        # 设置日志格式
-        format_str = logging.Formatter(fmt)
-        # 设置文件里写入的格式
-        th.setFormatter(format_str)
-        # 设置日志级别
-        self.logger.setLevel(self.level_relations.get(level))
-        # 往文件里写入#指定间隔时间自动生成文件的处理器
-        self.logger.addHandler(th)
-
-
 log = Logger()
-
 
 login_window = tk.Tk()
 login_window.title('五行修真辅助')
@@ -65,9 +31,11 @@ userPass = tk.StringVar()
 password = tk.Entry(login_window, textvariable=userPass, show='*')
 password.place(x=80, y=45)
 
+INDEX = 0
 
 success = 0
 fail = 0
+
 
 def login():
 
@@ -92,6 +60,13 @@ def login():
         zhujiao_tag = zhujiao_soup.find(name='a', text='人物状态')
         zhujiao_char = 'char_' + zhujiao_tag.attrs['href'].split('=')[1]
 
+        main_info = requests.get(url='%s%s' % (url, zhujiao_tag.attrs['href']), headers=headers)
+        info_soup = BeautifulSoup(main_info.text, "html.parser")
+        info_tag = (info_soup.find(text=compile("名字.*"))).parent.findNext('br').previous
+        xianyuan_tag = (info_soup.find(text=compile("仙缘：.*"))).parent.findNext('br').previous
+        age_tag = (info_soup.find(text=compile(".*年")))
+        level_tag = (info_soup.find(text=compile("等级：.*"))).parent.findNext('br').previous
+
         # 道徒代码
         daotu = requests.get(url='%s%s' % (url, '?menu=daotutudi'), headers=headers)
         daotu_soup = BeautifulSoup(daotu.text, "html.parser")
@@ -106,63 +81,146 @@ def login():
         for char in daotu_char:
             data[char] = 1
         data['monster_battle'] = 2
-        data['xyqy'] = 1
 
         login_window.destroy()
         main_window = tk.Tk()
         main_window.title('五行修真辅助')
         main_window.geometry('600x400')
 
-        label_common = tk.Label(main_window, text='怪物代码:')
-        label_common.place(x=180, y=50)
+        frame_info = tk.Frame(main_window, width=300, height=245)
+        frame_info.place(x=0, y=0)
+        frame_battle = tk.Frame(main_window, width=300, height=245)
+        frame_battle.place(x=300, y=0)
+
+        var_message = tk.StringVar()
+        list_message = tk.Listbox(main_window, listvariable=var_message, width=600, height=155)
+        list_message.place(x=0, y=245)
+
+        label_name = tk.Label(frame_info, text='名字:%s' % info_tag)
+        label_name.pack()
+
+        label_xianyuan = tk.Label(frame_info, text='仙缘:%s' % xianyuan_tag)
+        label_xianyuan.pack()
+
+        label_age = tk.Label(frame_info, text='寿命:%s' % age_tag)
+        label_age.pack()
+
+        label_level = tk.Label(frame_info, text='等级:%s' % level_tag)
+        label_level.pack()
+
+        def refresh(name, xianyuan, age, level):
+            # global label_name, label_xianyuan, label_age, label_level
+            refresh_info = requests.get(url='%s%s' % (url, zhujiao_tag.attrs['href']), headers=headers)
+            refresh_soup = BeautifulSoup(refresh_info.text, "html.parser")
+            name.config(text='名字:%s' % (refresh_soup.find(text=compile("名字.*"))).parent.findNext('br').previous)
+            xianyuan.config(text='仙缘:%s' % (refresh_soup.find(text=compile("仙缘：.*"))).parent.findNext('br').previous)
+            age.config(text='寿命:%s' % (refresh_soup.find(text=compile(".*年"))))
+            level.config(text='等级:%s' % (refresh_soup.find(text=compile("等级：.*"))).parent.findNext('br').previous)
+
+        button_refresh = tk.Button(frame_info, text='刷新', command=lambda :refresh(label_name, label_xianyuan, label_age, label_level)).pack()
+
+        label_common = tk.Label(frame_battle, text='怪物代码:').place(x=0, y=0)
+
         # common输入
         var_common = tk.StringVar()
-        common = tk.Entry(main_window, textvariable=var_common)
-        common.place(x=250, y=50)
+        entry_common_code = tk.Entry(frame_battle, textvariable=var_common)
+        entry_common_code.place(x=80, y=0)
 
-        def start_battle():
-            common.config(state='readonly')
-            success = 0
-            fail = 0
-            global t
-            t = Job(char_common=var_common.get(), data=data, headers=headers)
-            t.start()
+        var_xy = tk.BooleanVar()
+        var_xy.set(True)
+        checkbutton_xy = tk.Checkbutton(frame_battle, text='自动触发奇遇', variable=var_xy)
+        checkbutton_xy.place(x=100, y=30)
 
-        def stop_battle():
-            common.config(state='normal')
-            log.logger.info('战斗成功率 = %.1f' % ((success / (success + fail)) * 100) + '%')
-            global t
-            t.stop()
+        def start_battle(button, entry):
+            global t, INDEX
+            if button['text'] == '挂机':
+                entry.config(state='readonly')
+                button['text'] = '停止'
+                INDEX = 0
+                t = Job()
+                t.start()
 
-        hit = tk.Button(main_window, text='挂机', command=start_battle)
-        hit.place(x=250, y=70)
-        cancel = tk.Button(main_window, text='停止', command=stop_battle)
-        cancel.place(x=300, y=70)
+            elif button['text'] == '停止':
+                entry.config(state='normal')
+                button['text'] = '挂机'
+                list_message.delete(0, END)
+                t.stop()
 
-        var_age = tk.StringVar()
-        var_info = tk.StringVar()
-        label_age = tk.Label(main_window, textvariable=var_age)
-        label_age.place(x=300, y=110)
-        label_info = tk.Label(main_window, textvariable=var_info)
-        label_info.place(x=300, y=130)
+        button_battle = tk.Button(frame_battle, text='挂机',
+                                  command=lambda: start_battle(button_battle, entry_common_code))
+
+        button_battle.place(x=135, y=60)
+
+        # var_info = tk.StringVar()
+        # label_info = tk.Label(text_message, textvariable=var_info)
+        # label_info.pack()
 
         class Job(Thread):
 
-            def __init__(self, char_common, data, headers):
+            def __init__(self):
                 super(Job, self).__init__()
                 self.__flag = Event()  # 用于暂停线程的标识
                 self.__flag.set()  # 设置为True
                 self.__running = Event()  # 用于停止线程的标识
                 self.__running.set()  # 将running设置为True
-                self.char_common = char_common
-                self.data = data
-                self.headers = headers
 
             def run(self):
                 while self.__running.isSet():
                     self.__flag.wait()  # 为True时立即返回, 为False时阻塞直到内部的标识位为True后返回
                     start_time = time()
-                    guaji_req(self.char_common, self.data, self.headers)
+
+                    global INDEX
+                    if var_xy.get() is True:
+                        data['xyqy'] = 1
+                    elif 'xyqy' in data.keys():
+                        del data['xyqy']
+                    try:
+                        guaji_res = requests.post(url='%s%s%s' % (url, '?common=', var_common.get()), data=data,
+                                                  headers=headers)
+                        battle_soup = BeautifulSoup(guaji_res.text, "html.parser")
+                        fail_tag = battle_soup.find(text=compile("战斗失败·除魔失败.*"))
+                        if fail_tag is not None:
+                            global fail
+                            fail += 1
+                            if INDEX < 9:
+                                INDEX += 1
+                            else:
+                                list_message.delete(0)
+                            list_message.insert(END, (strftime("%Y-%m-%d %H:%M:%S--", localtime()) + '战斗失败！\n'))
+                            log.logger.info('战斗失败·除魔失败')
+                        else:
+                            exp_tag = battle_soup.find(text=compile("获得经验 : .*"))
+                            if not exp_tag:
+                                exp_tag = ''
+                            else:
+                                exp_tag += ','
+                            money_tag = battle_soup.find(text=compile("获得银两 : .*"))
+                            if not money_tag:
+                                money_tag = ''
+                            else:
+                                money_tag += ','
+                            zhenqi_tag = battle_soup.find(text=compile("获得真气 : .*"))
+                            if not zhenqi_tag:
+                                zhenqi_tag = ''
+                            purchase_char = (exp_tag + money_tag + zhenqi_tag).replace('\n', '')
+                            if len(purchase_char) < 4:
+                                Logger('../LOG/error.log', level='error').logger.error('ERROR201:' + str(battle_soup))
+                            else:
+                                global success
+                                success += 1
+                                if INDEX < 9:
+                                    INDEX += 1
+                                else:
+                                    list_message.delete(0)
+                                list_message.insert(END, (strftime("%Y-%m-%d %H:%M:%S--", localtime()) + purchase_char + '\n'))
+                                log.logger.info(purchase_char)
+                        age_tag = battle_soup.find(text=compile(".*年.*"))
+                        if age_tag is not None:
+                            label_age.config(text='寿命:' + age_tag)
+                    except Exception as e:
+                        Logger('../LOG/error.log', level='error').logger.error('ERROR209:' + format_exc())
+                    finally:
+                        pass
                     end_time = time()
                     if (end_time - start_time) < 3:
                         log.logger.info("延时:%.2fs" % (3 - (end_time - start_time)))
@@ -181,57 +239,14 @@ def login():
                 self.__running.clear()  # 设置为False
                 log.logger.info('stop')
 
-        t = Job(char_common=var_common.get(), data=data, headers=headers)
+        t = Job()
 
         requests.adapters.DEFAULT_RETRIES = 5
 
-        def guaji_req(char_common, data, headers):
-            try:
-
-                guaji_res = requests.post(url='%s%s%s' % (url, '?common=', char_common), data=data, headers=headers)
-                battle_soup = BeautifulSoup(guaji_res.text, "html.parser")
-                fail_tag = battle_soup.find(text=compile("战斗失败·除魔失败.*"))
-                if fail_tag is not None:
-                    global fail
-                    fail += 1
-                    var_info.set(strftime("%Y-%m-%d %H:%M:%S--", localtime()) + '战斗失败！')
-                    log.logger.info('战斗失败·除魔失败')
-                else:
-                    exp_tag = battle_soup.find(text=compile("获得经验 : .*"))
-                    if not exp_tag:
-                        exp_tag = ''
-                    else:
-                        exp_tag += ','
-                    money_tag = battle_soup.find(text=compile("获得银两 : .*"))
-                    if not money_tag:
-                        money_tag = ''
-                    else:
-                        money_tag += ','
-                    zhenqi_tag = battle_soup.find(text=compile("获得真气 : .*"))
-                    if not zhenqi_tag:
-                        zhenqi_tag = ''
-                    purchase_char = (exp_tag + money_tag + zhenqi_tag).replace('\n', '')
-                    if len(purchase_char) < 4:
-                        Logger('../LOG/error.log', level='error').logger.error('ERROR201:' + battle_soup)
-                    else:
-                        global success
-                        success += 1
-                        var_info.set(strftime("%Y-%m-%d %H:%M:%S--", localtime()) + purchase_char)
-                        log.logger.info(purchase_char)
-                age_tag = battle_soup.find(text=compile(".*年.*"))
-                if age_tag is not None:
-                    var_age.set('剩余寿命:' + age_tag)
-            except Exception as e:
-                Logger('../LOG/error.log', level='error').logger.error('ERROR209:' + format_exc(e))
-            finally:
-
-                label_age.place(x=200, y=110)
-                label_info.place(x=100, y=130)
-
         main_window.mainloop()
     except Exception as ex:
-        messagebox.showerror('error', '应该是账号或者密码错误。。。')
-        Logger('../LOG/error.log', level='error').logger.error('ERROR221:' + format_exc(ex))
+        tkinter.messagebox.showerror('error', '应该是账号或者密码错误。。。')
+        Logger('../LOG/error.log', level='error').logger.error('ERROR221:' + format_exc())
 
 
 login = tk.Button(login_window, text='登录', command=login)
